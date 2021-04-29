@@ -71,18 +71,18 @@ namespace TinyplyCSharp
 
     public class PlyProperty
     {
-        public PlyProperty(BinaryReader istream)
+        public PlyProperty(string[] propertyLine)
         {
-            string type = istream.ReadWord();
+            string type = propertyLine[1];
             if (type == "list")
             {
-                string countType = istream.ReadWord();
-                type = istream.ReadWord();
+                string countType = propertyLine[2];
+                type = propertyLine[3];
                 ListType = PlyHelper.PropertyTypeFromString(countType);
                 IsList = true;
             }
             PropertyType = PlyHelper.PropertyTypeFromString(type);
-            Name = istream.ReadWord();
+            Name = propertyLine[propertyLine.Length-1];
         }
 
         public PlyProperty(Type type, string name)
@@ -281,6 +281,7 @@ namespace TinyplyCSharp
 
         public static string ReadWord(this BinaryReader stream)
         {
+
             Encoding encoding = Encoding.Default;
             string word = "";
             // read single character at a time building a word 
@@ -289,7 +290,7 @@ namespace TinyplyCSharp
                .With(c =>
                { // with each character . . .
                  // convert read bytes to char
-                   var chr = encoding.GetChars(BitConverter.GetBytes(c)).First();
+                   var chr = Convert.ToChar(c);
 
                    if (c == -1 || (Char.IsWhiteSpace(chr) && !string.IsNullOrEmpty(word)))
                        return -1; //signal end of word
@@ -331,6 +332,36 @@ namespace TinyplyCSharp
 
             return -1;
         }
+
+        public static string[] SplitString(string content)
+        {
+            List<string> result = new List<string>();
+            int len = content.Length;
+            int startIndex = 0;
+            string tmpString = "";
+
+            for (int i=0; i<len; ++i)
+            {
+                if (content[i] == ' ' || content[i] == '\n' || content[i] == '\r')
+                {
+                    tmpString = content.Substring(startIndex, i - startIndex);
+                    if (!string.IsNullOrEmpty(tmpString))
+                    {
+                        result.Add(tmpString);
+                    }
+                    startIndex = i + 1;
+                }
+            }
+
+            tmpString = content.Substring(startIndex, len - startIndex);
+            if (!string.IsNullOrEmpty(tmpString))
+            {
+                result.Add(tmpString);
+            }
+
+            return result.ToArray();
+        }
+
     }
 
     public class PlyElement
@@ -486,6 +517,14 @@ namespace TinyplyCSharp
 
         public void Read(MemoryStream istream)
         {
+            string[] contentArray = null;
+            if (!IsBinary)
+            {
+                StreamReader sreader = new StreamReader(istream);
+                string content = sreader.ReadToEnd();
+                contentArray = PlyHelper.SplitString(content);
+            }
+
             List<PlyData> buffers = new List<PlyData>();
             foreach (var entry in _userData)
             {
@@ -505,7 +544,14 @@ namespace TinyplyCSharp
             // No list hints? Then we need to calculate how much memory to allocate
             if (listHints == 0)
             {
-                ParseData(istream, true);
+                if (IsBinary)
+                {
+                    ParseDataBinary(istream, true);
+                }
+                else
+                {
+                    ParseDataAscii(contentArray, true);
+                }
             }
 
             // Count the number of properties (required for allocation)
@@ -555,7 +601,14 @@ namespace TinyplyCSharp
             }
 
             // Populate the data
-            ParseData(istream, false);
+            if (IsBinary)
+            {
+                ParseDataBinary(istream, false);
+            }
+            else
+            {
+                ParseDataAscii(contentArray, false);
+            }
 
             // In-place big-endian to little-endian swapping if required
             if (IsBigEndian)
@@ -782,52 +835,52 @@ namespace TinyplyCSharp
             return stride;
         }
 
-        int ReadPropertyAscii(Type t, int stride, byte[] dest, ref int destOffset, BinaryReader istream)
+        int ReadPropertyAscii(Type t, int stride, byte[] dest, ref int destOffset, string[] contentArray, ref int contentArrayIndex)
         {
             switch (t)
             {
                 case Type.INT8:
                 case Type.UINT8:
-                    dest[destOffset] = Convert.ToByte(istream.ReadWord());
+                    dest[destOffset] = byte.Parse(contentArray[contentArrayIndex++]);
                     break;
                 case Type.INT16:
                     {
-                        Int16 data = Convert.ToInt16(istream.ReadWord());
+                        Int16 data = Int16.Parse(contentArray[contentArrayIndex++]);
                         var bytes = BitConverter.GetBytes(data);
                         Array.Copy(bytes, 0, dest, destOffset, bytes.Length);
                     }
                     break;
                 case Type.UINT16:
                     {
-                        UInt16 data = Convert.ToUInt16(istream.ReadWord());
+                        UInt16 data = UInt16.Parse(contentArray[contentArrayIndex++]);
                         var bytes = BitConverter.GetBytes(data);
                         Array.Copy(bytes, 0, dest, destOffset, bytes.Length);
                     }
                     break;
                 case Type.INT32:
                     {
-                        Int32 data = Convert.ToInt32(istream.ReadWord());
+                        Int32 data = Int32.Parse(contentArray[contentArrayIndex++]);
                         var bytes = BitConverter.GetBytes(data);
                         Array.Copy(bytes, 0, dest, destOffset, bytes.Length);
                     }
                     break;
                 case Type.UINT32:
                     {
-                        UInt32 data = Convert.ToUInt32(istream.ReadWord());
+                        UInt32 data = UInt32.Parse(contentArray[contentArrayIndex++]);
                         var bytes = BitConverter.GetBytes(data);
                         Array.Copy(bytes, 0, dest, destOffset, bytes.Length);
                     }
                     break;
                 case Type.FLOAT32:
                     {
-                        float data = Convert.ToSingle(istream.ReadWord());
+                        float data = float.Parse(contentArray[contentArrayIndex++]);
                         var bytes = BitConverter.GetBytes(data);
                         Array.Copy(bytes, 0, dest, destOffset, bytes.Length);
                     }
                     break;
                 case Type.FLOAT64:
                     {
-                        double data = Convert.ToDouble(istream.ReadWord());
+                        double data = double.Parse(contentArray[contentArrayIndex++]);
                         var bytes = BitConverter.GetBytes(data);
                         Array.Copy(bytes, 0, dest, destOffset, bytes.Length);
                     }
@@ -880,15 +933,14 @@ namespace TinyplyCSharp
             while ((line = istream.ReadLine()) != null)
             {
                 line = line.Trim();
-                byte[] array = Encoding.Default.GetBytes(line);
-                MemoryStream stream = new MemoryStream(array);
-                BinaryReader ls = new BinaryReader(stream);
-                string token = ls.ReadWord();
+
+                string[] lines = line.Split(' ');
+                string token = lines[0];
                 if (token == "ply" || token == "PLY" || token == "") continue;
                 else if (token == "comment") ReadHeaderText(line, ref _comments, 8);
-                else if (token == "format") ReadHeaderFormat(ls);
-                else if (token == "element") ReadHeaderElement(ls);
-                else if (token == "property") ReadHeaderProperty(ls);
+                else if (token == "format") ReadHeaderFormat(lines[1]);
+                else if (token == "element") ReadHeaderElement(lines);
+                else if (token == "property") ReadHeaderProperty(lines);
                 else if (token == "obj_info") ReadHeaderText(line, ref _objInfo, 9);
                 else if (token == "end_header") break;
                 else success = false;
@@ -900,13 +952,17 @@ namespace TinyplyCSharp
         public delegate void DelegateRead(PropertyLookup f, PlyProperty p, byte[] dest, ref int destOffset, BinaryReader istream);
         public delegate int DelegateSkip(PropertyLookup f, PlyProperty p, BinaryReader istream);
         public delegate int DelegateReadListBinary(Type t, ref int listSize, int stride, BinaryReader istream);
-        public delegate int DelegateReadListAscii(Type t, ref int listSize, int stride, BinaryReader istream);
-        void ParseData(MemoryStream istream, bool firstPass)
+        void ParseDataBinary(MemoryStream istream, bool firstPass)
         {
+            if (!IsBinary)
+            {
+                throw new ApplicationException("ParseDataBinary only support parse binary data");
+            }
+            var start = istream.Position;
+
             DelegateRead read;
             DelegateSkip skip;
 
-            var start = istream.Position;
             BinaryReader breader = new BinaryReader(istream);
 
             int listSize = 0;
@@ -916,31 +972,31 @@ namespace TinyplyCSharp
             // after reading. We do this as a performance optimization; endian flipping is
             // done on regular properties as a post-process after reading (also for optimization)
             // but we need the correct little-endian list count as we read the file.
-            DelegateReadListBinary readListBinary = (Type t, ref int listSize, int stride, BinaryReader istream) =>
+            DelegateReadListBinary readListBinary = (Type t, ref int rlistSize, int stride, BinaryReader bistream) =>
             {
-                var bytes = istream.ReadBytes(stride);
+                var bytes = bistream.ReadBytes(stride);
 
                 switch (t)
                 {
                     case Type.INT16:
                         if (IsBigEndian) PlyHelper.EndianSwapHelper.EndianSwapBuffer<Int16>(bytes, 0, stride);
-                        listSize = (int)BitConverter.ToInt16(bytes);
+                        rlistSize = (int)(bytes[0] << 8 | bytes[1]);
                         break;
                     case Type.UINT16:
                         if (IsBigEndian) PlyHelper.EndianSwapHelper.EndianSwapBuffer<UInt16>(bytes, 0, stride);
-                        listSize = (int)BitConverter.ToUInt16(bytes);
+                        rlistSize = (int)(bytes[0] << 8 | bytes[1]);
                         break;
                     case Type.INT32:
                         if (IsBigEndian) PlyHelper.EndianSwapHelper.EndianSwapBuffer<Int32>(bytes, 0, stride);
-                        listSize = (int)BitConverter.ToInt32(bytes);
+                        rlistSize = (int)(bytes[0] << 32 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
                         break;
                     case Type.UINT32:
                         if (IsBigEndian) PlyHelper.EndianSwapHelper.EndianSwapBuffer<UInt32>(bytes, 0, stride);
-                        listSize = (int)BitConverter.ToUInt32(bytes);
+                        rlistSize = (int)(bytes[0] << 32 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
                         break;
                     case Type.UINT8:
                     case Type.INT8:
-                        listSize = (int)bytes[0];
+                        rlistSize = (int)bytes[0];
                         break;
                     default:
                         break;
@@ -949,96 +1005,33 @@ namespace TinyplyCSharp
                 return stride;
             };
 
-            DelegateReadListAscii readListAscii = (Type t, ref int listSize, int stride, BinaryReader istream) =>
             {
-                switch (t)
-                {
-                    case Type.UINT8:
-                    case Type.INT8:
-                        listSize = Convert.ToByte(istream.ReadWord());
-                        break;
-                    case Type.INT16:
-                        listSize = Convert.ToInt16(istream.ReadWord());
-                        break;
-                    case Type.UINT16:
-                        listSize = Convert.ToUInt16(istream.ReadWord());
-                        break;
-                    case Type.INT32:
-                        listSize = Convert.ToInt32(istream.ReadWord());
-                        break;
-                    case Type.UINT32:
-                        listSize = (int)Convert.ToUInt32(istream.ReadWord());
-                        break;
-                    default:
-                        break;
-                }
-
-                return stride;
-            };
-
-
-            if (IsBinary)
-            {
-                read = (PropertyLookup f, PlyProperty p, byte[] dest, ref int destOffset, BinaryReader istream) =>
+                read = (PropertyLookup f, PlyProperty p, byte[] dest, ref int destOffset, BinaryReader bistream) =>
                 {
                     if (!p.IsList)
                     {
-                        ReadPropertyBinary(f.PropStride, dest, ref destOffset, istream); 
+                        ReadPropertyBinary(f.PropStride, dest, ref destOffset, bistream);
                     }
                     else
                     {
-                        readListBinary(p.ListType, ref listSize, f.ListStride, istream);
-                        ReadPropertyBinary(f.PropStride * listSize, dest, ref destOffset, istream);
+                        readListBinary(p.ListType, ref listSize, f.ListStride, bistream);
+                        ReadPropertyBinary(f.PropStride * listSize, dest, ref destOffset, bistream);
                     }
                 };
 
-                skip = (PropertyLookup f, PlyProperty p, BinaryReader istream) =>
+                skip = (PropertyLookup f, PlyProperty p, BinaryReader bistream) =>
                 {
                     if (!p.IsList)
                     {
-                        var bytes = istream.ReadBytes(f.PropStride);
+                        var bytes = bistream.ReadBytes(f.PropStride);
                         Array.Copy(bytes, 0, _scratch, 0, f.PropStride);
                         return f.PropStride;
                     }
 
-                    readListBinary(p.ListType, ref listSize, f.ListStride, istream);
+                    readListBinary(p.ListType, ref listSize, f.ListStride, bistream);
                     var bytesToSkip = f.PropStride * listSize;
-                    istream.ReadBytes(bytesToSkip);
+                    bistream.ReadBytes(bytesToSkip);
                     return bytesToSkip;
-                };
-            }
-            else
-            {
-                read = (PropertyLookup f, PlyProperty p, byte[] dest, ref int destOffset, BinaryReader istream) =>
-                {
-                    if (!p.IsList)
-                    {
-                        ReadPropertyAscii(p.PropertyType, f.PropStride, dest, ref destOffset, istream);
-                    }
-                    else
-                    {
-                        readListAscii(p.ListType, ref listSize, f.ListStride, istream);
-                        for (int i = 0; i < listSize; ++i)
-                        {
-                            ReadPropertyAscii(p.PropertyType, f.PropStride, dest, ref destOffset, istream);
-                        }
-                    }
-                };
-
-                skip = (PropertyLookup f, PlyProperty p, BinaryReader istream) =>
-                {
-                    if (p.IsList)
-                    {
-                        readListAscii(p.ListType, ref listSize, f.ListStride, istream);
-                        for (int i = 0; i < listSize; ++i)
-                        {
-                            var word2 = istream.ReadWord();
-                        }
-                        return listSize * f.PropStride;
-                    }
-
-                    var word = istream.ReadWord();
-                    return f.PropStride;
                 };
             }
 
@@ -1088,22 +1081,112 @@ namespace TinyplyCSharp
             if (firstPass) istream.Position = start;
         }
 
-        void ReadHeaderFormat(BinaryReader istream)
+
+        public delegate void DelegateReadAscii(PropertyLookup f, PlyProperty p, byte[] dest, ref int destOffset);
+        public delegate int DelegateSkipAscii(PropertyLookup f, PlyProperty p);
+        void ParseDataAscii(string[] contentArray, bool firstPass)
         {
-            string s = istream.ReadWord();
+            if (contentArray == null)
+            {
+                throw new ArgumentNullException("contentArray");
+            }
+            DelegateReadAscii read;
+            DelegateSkipAscii skip;
+
+            int contentArrayIndex = 0;
+
+            int listSize = 0;
+
+            {
+                read = (PropertyLookup f, PlyProperty p, byte[] dest, ref int destOffset) =>
+                {
+                    if (!p.IsList)
+                    {
+                        ReadPropertyAscii(p.PropertyType, f.PropStride, dest, ref destOffset, contentArray, ref contentArrayIndex);
+                    }
+                    else
+                    {
+                        listSize = int.Parse(contentArray[contentArrayIndex++]);
+                        for (int i = 0; i < listSize; ++i)
+                        {
+                            ReadPropertyAscii(p.PropertyType, f.PropStride, dest, ref destOffset, contentArray, ref contentArrayIndex);
+                        }
+                    }
+                };
+
+                skip = (PropertyLookup f, PlyProperty p) =>
+                {
+                    if (p.IsList)
+                    {
+                        listSize = int.Parse(contentArray[contentArrayIndex++]);
+                        return listSize * f.PropStride;
+                    }
+
+                    var word = contentArray[contentArrayIndex++];
+                    return f.PropStride;
+                };
+            }
+
+            var elementPropertyLookup = MakePropertyLookupTable();
+            int elementIdx = 0;
+            int propertyIdx = 0;
+            ParsingHelper helper;
+
+            // This is the inner import loop
+            foreach (var element in _elements)
+            {
+                for (int count = 0; count < element.Size; ++count)
+                {
+                    propertyIdx = 0;
+                    foreach (var property in element.Properties)
+                    {
+                        PropertyLookup lookup = elementPropertyLookup[elementIdx][propertyIdx];
+
+                        if (!lookup.Skip)
+                        {
+                            helper = lookup.Helper;
+                            if (firstPass)
+                            {
+                                helper.Cursor.TotalSizeBytes += skip(lookup, property);
+
+                                if (property.IsList)
+                                {
+                                    property.ListCounts.Add(listSize);
+                                }
+                            }
+                            else
+                            {
+                                read(lookup, property, helper.Data.Buffer.Get(), ref helper.Cursor.ByteOffset);
+                            }
+                        }
+                        else
+                        {
+                            skip(lookup, property);
+                        }
+                        propertyIdx++;
+                    }
+                }
+                elementIdx++;
+            }
+        }
+
+
+        void ReadHeaderFormat(string s)
+        {
             if (s == "binary_little_endian") IsBinary = true;
             else if (s == "binary_big_endian") IsBinary = IsBigEndian = true;
         }
 
-        void ReadHeaderElement(BinaryReader istream)
+        void ReadHeaderElement(string[] elementLine)
         {
-            _elements.Add(new PlyElement(istream));
+            // element vertex 333
+            _elements.Add(new PlyElement(elementLine[1], int.Parse(elementLine[2])));
         }
 
-        void ReadHeaderProperty(BinaryReader istream)
+        void ReadHeaderProperty(string[] propertyLine)
         {
             if (_elements.Count == 0) throw new ApplicationException("no elements defined; file is malformed");
-            _elements.Last().Properties.Add(new PlyProperty(istream));
+            _elements.Last().Properties.Add(new PlyProperty(propertyLine));
         }
 
         void ReadHeaderText(string line, ref List<string> place, int erase = 0)
