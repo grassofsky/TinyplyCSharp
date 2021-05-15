@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -82,7 +83,7 @@ namespace TinyplyCSharp
                 IsList = true;
             }
             PropertyType = PlyHelper.PropertyTypeFromString(type);
-            Name = propertyLine[propertyLine.Length-1];
+            Name = propertyLine[propertyLine.Length - 1];
         }
 
         public PlyProperty(Type type, string name)
@@ -256,7 +257,7 @@ namespace TinyplyCSharp
                 {
                     ch = reader.ReadChar();
                 }
-                catch (EndOfStreamException )
+                catch (EndOfStreamException)
                 {
                     if (result.Length == 0) return null;
                     else break;
@@ -340,7 +341,7 @@ namespace TinyplyCSharp
             int startIndex = 0;
             string tmpString = "";
 
-            for (int i=0; i<len; ++i)
+            for (int i = 0; i < len; ++i)
             {
                 if (content[i] == ' ' || content[i] == '\n' || content[i] == '\r')
                 {
@@ -618,7 +619,7 @@ namespace TinyplyCSharp
                     byte[] data = b.Buffer.Get();
                     var stride = PlyHelper.PropertyTable[b.T].Stride;
                     var bufferSizeBytes = b.Buffer.SizeBytes();
-                
+
                     switch (b.T)
                     {
                         case Type.INT16:
@@ -1119,6 +1120,7 @@ namespace TinyplyCSharp
                     if (p.IsList)
                     {
                         listSize = int.Parse(contentArray[contentArrayIndex++]);
+                        contentArrayIndex = contentArrayIndex + listSize;
                         return listSize * f.PropStride;
                     }
 
@@ -1425,7 +1427,7 @@ namespace TinyplyCSharp
             srcOffset += PlyHelper.PropertyTable[t].Stride;
         }
 
-        void WritePropertyBinary(BinaryWriter ostream, byte[] src, ref int srcOffset,  int stride)
+        void WritePropertyBinary(BinaryWriter ostream, byte[] src, ref int srcOffset, int stride)
         {
             byte[] byteForWrite = new byte[stride];
             Array.Copy(src, srcOffset, byteForWrite, 0, stride);
